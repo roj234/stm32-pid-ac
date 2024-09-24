@@ -1,0 +1,118 @@
+<title>字库生成H5版</title>
+<div style="width: 800px; margin: auto">
+<h1 style="text-align:center">字库生成H5版</h1>
+<input type="text" placeholder="字体" value="宋体" id="font" />
+<input type="number" min=4 max=64 placeholder="字号" value="16" id="font_size" /><br>
+<input type="number" min=4 max=64 placeholder="宽度" value="16" id="font_w" />
+<input type="number" min=4 max=64 placeholder="高度" value="16" id="font_h" /><br>
+<textarea id="text" style="resize: none; width: 600px; height: 600px">
+空调v1.1
+作者
+
+空调v1.1 ℃
+温度 风速 低 中 高 自动
+室温 出风
+睡眠 定时 设置
+
+烘干防霉
+
+设置
+制冷 制热 自动 睡眠
+亮度 调试
+保存 初始化
+
+初始化
+S1/S2调节 S3切换 S4确定
+断电退出 (取消)
+
+ADC校准
+PID校准
+PWM风机 交流跳过
+插值 开 关
+阀门校准
+开阀 打点 关阀
+</textarea><br>
+<canvas width="16" height="16" title="像素渲染框" id="pix" style="background: black"></canvas>
+<canvas width="128" height="64" title="预览" id="view" style="background: black"></canvas><br>
+<textarea id="output" style="resize: none; width: 600px; height: 600px"></textarea>
+</div>
+
+
+<script src="gbk.js"></script>
+<script>
+function G(i) {return document.getElementById(i)}
+
+//请先去重，然后按照uint16排序
+const str = G("text").value.replaceAll(/[\n \x00-\x7F]/g, "");
+
+const slot = {};
+for(const c of str) {
+  const arr = GBK.encode(c);
+  slot[c] = (arr[1] << 16) | arr[0];
+}
+const text = Object.keys(slot).sort((a, b) => (slot[a] - slot[b])).join("");
+
+const pix = parseInt(G("font_size").value);
+const width = parseInt(G("font_w").value);
+const height = parseInt(G("font_h").value);
+const font = `${pix}px "${G("font").value}"`;
+
+const ctx = G("pix").getContext("2d");
+ctx.width = width;
+ctx.height = height;
+ctx.font = font;
+ctx.textAlign = "left";
+ctx.textBaseline = "top";
+ctx.fillStyle = "#eeeeff";
+
+const rctx = G("view").getContext("2d");
+let rc_x = 0, rc_y = 0;
+
+const output = G("output");
+function out(str) {output.setRangeText(str,output.textLength,output.textLength);}
+
+async function delay(ms) {
+  return new Promise((ok) => {
+    setTimeout(ok, ms);
+  });
+}
+
+async function render() {
+  output.value = "{\n";
+  for(let i = 0; i < text.length; i++) {
+    const c = text.charAt(i);
+    ctx.fillText(c,0,0);
+    const img = ctx.getImageData(0,0,width,height);
+    encode(c,img.data);
+
+    rctx.putImageData(img,rc_x,rc_y);
+    if ((rc_x += width) >= rctx.canvas.width) {
+      rc_x = 0;
+      rc_y += height;
+    }
+    if (rc_y >= rctx.canvas.height) {
+      rc_y = 0;
+    }
+    
+    await delay(10);
+    ctx.clearRect(0,0,width,height);
+  }
+}
+
+function encode(c,img) {
+  out(`{"${c}",`);
+  const buf = new Uint32Array(img.buffer);
+  let bit = 0, pos = 0;
+  for(let val of buf) {
+    bit |= (val != 0) << pos++;
+    if (pos == 8) {
+      out(bit === 0 ? `0,` : `0x${bit.toString(16)},`);
+      bit = 0;
+      pos = 0;
+    }
+  }
+  out(`},\n`);
+}
+
+  render();
+</script>

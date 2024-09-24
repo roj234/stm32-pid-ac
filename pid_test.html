@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<title>PID</title>
+</head>
+<body>
+<input type="range" min="0" max="1" step="0.01" id="t" />
+<input type="range" min="-1" max="0" step="0.01" id="p" />
+<input type="range" min="-0.5" max="0" step="0.005" id="i" />
+<input type="range" min="-0.1" max="0" step="0.001" id="d" />
+<div id="str">PID参数调节口诀：
+	参数整定找最佳，从小到大顺序查
+	先是比例后积分，最后再把微分加
+	曲线振荡很频繁，比例度盘要放大
+	曲线漂浮绕大湾，比例度盘往小扳
+	曲线偏离回复慢，积分时间往下降
+	曲线波动周期长，积分时间再加长
+	曲线振荡频率快，先把微分降下来
+	动差大来波动慢。微分时间应加长
+	理想曲线两个波，前高后低4比1
+	一看二调多分析，调节质量不会低
+</div>
+<canvas id="canvas"></canvas>
+</body>
+<script>
+	let Kt = 0.1, Kp = 0, Ki = 0, Kd = 0;
+	document.querySelectorAll("input").forEach(e => {
+        e.addEventListener("input", e => {
+            let val =  parseFloat(e.target.value);
+            switch (e.target.id) {
+                case "t": Kt = val;break;
+				case "p": Kp = val;break;
+				case "i": Ki = val;break;
+				case "d": Kd = val;break;
+			}
+            draw();
+		});
+	})
+    class PIDPos {
+        constructor(dt, max, min, Kp, Ki, Kd) {
+            this.dt = dt  // 循环时长
+            this.max = max  // 操作变量最大值
+            this.min = min  // 操作变量最小值
+            this.Kp = Kp  // 比例增益
+            this.Ki = Ki  // 微分增益
+            this.Kd = Kd  // 积分增益
+            this.integral = 0  // 直到上一次的误差值
+            this.pre_error = 0  // 上一次的误差值
+        }
+
+        calculate(setPoint, pv) {
+            // 其中 pv:process value 即过程值，
+            let error = setPoint - pv  // 误差（设定值与实际值的差值）
+            let  Pout = this.Kp * error  // 比例项 Kp * e(t)
+            this.integral += error * this.dt  //∑e(t)*△t
+            let Iout = this.Ki * this.integral  // 积分项 Ki * ∑e(t)*△t
+            let derivative = (error - this.pre_error) / this.dt  //(e(t)-e(t-1))/△t
+            let Dout = this.Kd * derivative  // 微分项 Kd * (e(t)-e(t-1))/△t
+
+            let output = Pout + Iout + Dout  // 新的目标值  位置式PID：u(t) = Kp*e(t) + Ki * ∑e(t)*△t + Kd * (e(t)-e(t-1))/△t
+
+            if (output > this.max) output = this.max
+            else if (output < this.min) output = this.min
+
+            this.pre_error = error  // 保存本次误差，以供下次计算  e(k-1) = e(k)
+            return output
+        }
+    }
+    class PIDInc {
+        constructor(max, min, Kp, Ki, Kd) {
+            this.max = max  // 操作变量最大值
+            this.min = min  // 操作变量最小值
+            this.Kp = Kp  // 比例增益
+            this.Ki = Ki  // 微分增益
+            this.Kd = Kd  // 积分增益
+            this.error = 0  // 当前误差
+            this.error_1 = 0  //上次误差
+            this.error_2 = 0  // 上上次误差
+            this.pre_output = 0  //上次的输出值
+        }
+
+		calculate(setPoint, pv) {
+            // 其中 pv:process value 即过程值，
+            let error = setPoint - pv  // 误差（设定值与实际值的差值）
+            let Pout = this.Kp * (error - this.error_1)  // 比例项 Kp * (e(t)-e(t-1))
+            let Iout = this.Ki * error  // 积分项 Ki * e(t)
+            let Dout = this.Kd * (error - 2*this.error_1 + this.error_2)  // 微分项 Kd * (e(t)-2*e(t-1)+e(t-2))
+            let output = Pout + Iout + Dout + this.pre_output  // 新的目标值  位置式PID：u(t) = Kp*(e(t)-e(t-1)) + Ki*e(t) + Kd*(e(t)-2*e(t-1)+e(t-2)) + u(t-1
+
+            if (output > this.max)
+            output = this.max
+            else if (output < this.min)
+            output = this.min
+
+            this.pre_output = output
+            this.error_2 = this.error_1  //e(k-2) = e(k) ,进入下一次计算使用
+            this.error_1 = error  // e(k-1) = e(k)
+            return output
+        }
+	}
+
+    const t = 1000
+    const step = 10
+
+    function pidTest(pid) {
+        let ac = 24
+        let valve = 0
+		let realValve = 0
+
+        let rt = 30
+        let hot = 32
+        let cold = 16
+
+        let valRt = []
+        let valValve = []
+
+        for (let i = 0; i < t; i++) {
+            valve = pid.calculate(ac, parseInt(rt * 10) / 10) // 新的目标值
+            valve = parseInt(valve * step) / step // clamp
+
+            // 模拟制冷
+            let tmp = (cold - rt) * realValve * 0.01
+            rt += tmp
+            if (rt < cold)
+                rt = cold
+
+			if (Math.abs(valve - realValve) < 0.05) {
+                realValve = valve;
+			} else if (valve < realValve) {
+                realValve -= 0.05
+			} else {
+                realValve += 0.05
+			}
+
+            // 模拟传热
+            tmp = (hot - rt) * 0.003
+            rt += tmp
+            if (rt > hot)
+                rt = hot
+
+            // 随机扰动
+            if (Math.random() > 0.5)
+                rt += 0.02
+            if (Math.random() > 0.5)
+                rt -= 0.02
+
+            valValve.push(valve * 20)
+            valRt.push(rt)
+        }
+
+        return [valValve, valRt]
+    }
+
+    const canvas = document.querySelector("canvas");
+    function draw() {
+		let v = Kt === 0 ? new PIDInc(1, 0, Kp, Ki, Kd) : new PIDPos(Kt, 1, 0, Kp, Ki, Kd);
+        canvas.width = t;
+        canvas.height = 100;
+        let [vv, rt] = pidTest(v);
+
+        var ctx = canvas.getContext("2d");
+        ctx.fillStyle = "red";
+        for (let i = 0; i < t; i++) {
+            ctx.fillRect(i,vv[i],1,1);
+        }
+        ctx.fillStyle = "blue";
+        for (let i = 0; i < t; i++) {
+            ctx.fillRect(i,rt[i],1,1);
+        }
+        str.innerText = `Kt=${Kt}  Kp=${Kp}  Ki=${Ki}  Kd=${Kd}\nRT=${rt.slice(t-50, t).map(s => parseInt(s * 10) / 10)}`;
+	}
+
+    draw();
+</script>
+</html>
